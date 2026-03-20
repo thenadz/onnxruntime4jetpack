@@ -9,6 +9,25 @@
 namespace onnxruntime {
 namespace cuda {
 
+// ---------------------------------------------------------------------------
+// POD struct replacements for std::tuple in __global__ kernel parameters.
+//
+// nvcc 11.4's internal LLVM (7.0.1) crashes when lowering std::tuple
+// pass-by-value through the CUDA kernel ABI.  These trivially-copyable
+// aggregates carry the same data without triggering the codegen bug.
+// Host-side code continues to use std::tuple normally.
+// ---------------------------------------------------------------------------
+struct Int64x2    { int64_t  v0, v1; };
+struct Int64x3    { int64_t  v0, v1, v2; };
+struct Floatx2    { float    v0, v1; };
+struct Floatx3    { float    v0, v1, v2; };
+struct Int32x2    { int32_t  v0, v1; };
+struct Int32x3    { int32_t  v0, v1, v2; };
+struct Int64Ptrs2 { int64_t *v0, *v1; };
+struct Int64Ptrs3 { int64_t *v0, *v1, *v2; };
+template <typename T> struct TypedPtrs2 { T *v0, *v1; };
+template <typename T> struct TypedPtrs3 { T *v0, *v1, *v2; };
+
 using onnxruntime::ResizeCoordinateTransformationMode;
 using onnxruntime::UpsampleMode;
 
@@ -121,7 +140,7 @@ __global__ void _ComputeInterpolationAtLevel1(
     int32_t window_size,
     const uint8_t* clip8_table,
     const int64_t* bound_data,
-    std::tuple<int64_t*, int64_t*> outof_bounds_buffers,
+    Int64Ptrs2 outof_bounds_buffers,
     const AccumType* weight_coefficients,
     const T* Xdata, T* Ydata,
     const int N) {
@@ -185,7 +204,7 @@ __global__ void _ComputeInterpolationAtLevel2(
     bool use_extrapolation, float extrapolation_value,
     const uint8_t* clip8_table,
     const int64_t* bound_data,
-    std::tuple<int64_t*, int64_t*> outof_bounds_buffers,
+    Int64Ptrs2 outof_bounds_buffers,
     const AccumType* weight_coefficients,
     const T* Xdata, T* Ydata, int N) {
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
@@ -211,7 +230,7 @@ __global__ void _ComputeInterpolationAtLevel2(
   auto* Ydata_offset = Ydata + output_index + output_width * output_y + output_x;
 
   if (use_extrapolation) {
-    const auto* w_outof_bounds = std::get<1>(outof_bounds_buffers);
+    const auto* w_outof_bounds = outof_bounds_buffers.v1;
     // Extrapolate along the w dimension
     if (w_outof_bounds[static_cast<ptrdiff_t>(output_x)] != -1) {
       *Ydata_offset = static_cast<T>(extrapolation_value);
@@ -219,7 +238,7 @@ __global__ void _ComputeInterpolationAtLevel2(
     }
 
     // Extrapolate along the y dimension
-    const auto* y_outof_bounds = std::get<0>(outof_bounds_buffers);
+    const auto* y_outof_bounds = outof_bounds_buffers.v0;
     if (y_outof_bounds[static_cast<ptrdiff_t>(output_y)] != -1) {
       *Ydata_offset = static_cast<T>(extrapolation_value);
       return;
@@ -269,7 +288,7 @@ __global__ void _ComputeInterpolationAtLevel3(
     bool use_extrapolation, float extrapolation_value,
     const uint8_t* clip8_table,
     const int64_t* bound_data,
-    std::tuple<int64_t*, int64_t*, int64_t*> outof_bounds_buffers,
+    Int64Ptrs3 outof_bounds_buffers,
     const AccumType* weight_coefficients,
     const T* Xdata, T* Ydata, int N) {
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
@@ -292,7 +311,7 @@ __global__ void _ComputeInterpolationAtLevel3(
   auto* Ydata_offset = Ydata + id;
 
   if (use_extrapolation) {
-    const auto* w_outof_bounds = std::get<2>(outof_bounds_buffers);
+    const auto* w_outof_bounds = outof_bounds_buffers.v2;
     // Extrapolate along the w dimension
     if (w_outof_bounds[static_cast<ptrdiff_t>(output_x)] != -1) {
       *Ydata_offset = static_cast<T>(extrapolation_value);
@@ -300,14 +319,14 @@ __global__ void _ComputeInterpolationAtLevel3(
     }
 
     // Extrapolate along the y dimension
-    const auto* y_outof_bounds = std::get<1>(outof_bounds_buffers);
+    const auto* y_outof_bounds = outof_bounds_buffers.v1;
     if (y_outof_bounds[static_cast<ptrdiff_t>(output_y)] != -1) {
       *Ydata_offset = static_cast<T>(extrapolation_value);
       return;
     }
 
     // Extrapolate along the z dimension
-    const int64_t* z_outof_bounds = std::get<0>(outof_bounds_buffers);
+    const int64_t* z_outof_bounds = outof_bounds_buffers.v0;
     if (z_outof_bounds != nullptr && z_outof_bounds[static_cast<ptrdiff_t>(output_z)] != -1) {
       *Ydata_offset = static_cast<T>(extrapolation_value);
       return;
@@ -455,32 +474,32 @@ FUNC_DEF void SetupUpsampleFilterAnitAliasImpl(
 /// Buffers layout [h_data, w_data]
 template <typename AccumType, typename Filter, typename CudaFunctionOriginalCoordinate>
 __global__ void _SetupBilinearUpsampleFilterAntiAlias(
-    std::tuple<int64_t, int64_t> input_dims,       // h, w
-    std::tuple<int64_t, int64_t> output_dims,      // h, w
-    std::tuple<float, float> inv_scale_vals,       // h, w
-    std::tuple<float, float> roi_start_vals,       // h, w
-    std::tuple<float, float> roi_end_vals,         // h, w
-    std::tuple<float, float> dim_scaled_support,   // Pre-computed scaled support values h, w
-    std::tuple<int32_t, int32_t> dim_window_size,  // Pre-computed windows sizes h, w
+    Int64x2 input_dims,       // h, w
+    Int64x2 output_dims,      // h, w
+    Floatx2 inv_scale_vals,       // h, w
+    Floatx2 roi_start_vals,       // h, w
+    Floatx2 roi_end_vals,         // h, w
+    Floatx2 dim_scaled_support,   // Pre-computed scaled support values h, w
+    Int32x2 dim_window_size,  // Pre-computed windows sizes h, w
     float cubic_coeff_a,
     bool exclude_outside,
     int64_t* bounds,
     int64_t* out_of_bounds,
-    std::tuple<AccumType*, AccumType*> weighted_coefficients  // y, h buffers
+    TypedPtrs2<AccumType> weighted_coefficients  // y, h buffers
 ) {
-  const auto N = std::get<0>(output_dims) + std::get<1>(output_dims);
+  const auto N = output_dims.v0 + output_dims.v1;
 
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
 
-  if (id < std::get<0>(output_dims)) {
+  if (id < output_dims.v0) {
     // Setup for y
-    int64_t input_size = std::get<0>(input_dims);
-    int64_t output_size = std::get<0>(output_dims);
-    float inv_scale = std::get<0>(inv_scale_vals);
-    float roi_start = std::get<0>(roi_start_vals);
-    float roi_end = std::get<0>(roi_end_vals);
-    float scaled_support = std::get<0>(dim_scaled_support);
-    int32_t window_size = std::get<0>(dim_window_size);
+    int64_t input_size = input_dims.v0;
+    int64_t output_size = output_dims.v0;
+    float inv_scale = inv_scale_vals.v0;
+    float roi_start = roi_start_vals.v0;
+    float roi_end = roi_end_vals.v0;
+    float scaled_support = dim_scaled_support.v0;
+    int32_t window_size = dim_window_size.v0;
 
     SetupUpsampleFilterAnitAliasImpl<AccumType, Filter, CudaFunctionOriginalCoordinate>(
         id,
@@ -492,23 +511,23 @@ __global__ void _SetupBilinearUpsampleFilterAntiAlias(
         cubic_coeff_a,
         bounds,
         out_of_bounds,
-        std::get<0>(weighted_coefficients));
+        weighted_coefficients.v0);
 
   } else {
     // Setup for w
     // w = id - output_height
 
-    int64_t input_size = std::get<1>(input_dims);
-    int64_t output_size = std::get<1>(output_dims);
-    float inv_scale = std::get<1>(inv_scale_vals);
-    float roi_start = std::get<1>(roi_start_vals);
-    float roi_end = std::get<1>(roi_end_vals);
+    int64_t input_size = input_dims.v1;
+    int64_t output_size = output_dims.v1;
+    float inv_scale = inv_scale_vals.v1;
+    float roi_start = roi_start_vals.v1;
+    float roi_end = roi_end_vals.v1;
 
-    float scaled_support = std::get<1>(dim_scaled_support);
-    int32_t window_size = std::get<1>(dim_window_size);
+    float scaled_support = dim_scaled_support.v1;
+    int32_t window_size = dim_window_size.v1;
 
     // Adjust buffer positions
-    const auto y_output_size = std::get<0>(output_dims);
+    const auto y_output_size = output_dims.v0;
 
     auto i = id - y_output_size;
     bounds += (y_output_size * 2);
@@ -524,7 +543,7 @@ __global__ void _SetupBilinearUpsampleFilterAntiAlias(
         cubic_coeff_a,
         bounds,
         out_of_bounds,
-        std::get<1>(weighted_coefficients));
+        weighted_coefficients.v1);
   }
 }
 
@@ -539,30 +558,30 @@ __global__ void _SetupBilinearUpsampleFilterAntiAlias(
 /// </summary>
 template <typename AccumType, typename Filter, typename CudaFunctionOriginalCoordinate>
 __global__ void _SetupTrilinerarUpsampleFilterAntiAlias(
-    std::tuple<int64_t, int64_t, int64_t> input_dims,       // d, h, w
-    std::tuple<int64_t, int64_t, int64_t> output_dims,      // d, h, w
-    std::tuple<float, float, float> inv_scale_vals,         // d, h, w
-    std::tuple<float, float, float> roi_start_vals,         // d, h, w
-    std::tuple<float, float, float> roi_end_vals,           // d, h, w
-    std::tuple<float, float, float> dim_scaled_support,     // Pre-computed scaled support values d, h, w
-    std::tuple<int32_t, int32_t, int32_t> dim_window_size,  // Pre-computed windows sizes d, h, w
+    Int64x3 input_dims,       // d, h, w
+    Int64x3 output_dims,      // d, h, w
+    Floatx3 inv_scale_vals,         // d, h, w
+    Floatx3 roi_start_vals,         // d, h, w
+    Floatx3 roi_end_vals,           // d, h, w
+    Floatx3 dim_scaled_support,     // Pre-computed scaled support values d, h, w
+    Int32x3 dim_window_size,  // Pre-computed windows sizes d, h, w
     bool exclude_outisde,
     int64_t* bounds,
     int64_t* out_of_bounds,
-    std::tuple<AccumType*, AccumType*, AccumType*> weighted_coefficients) {
-  const auto N = std::get<0>(output_dims) + std::get<1>(output_dims) + std::get<2>(output_dims);
+    TypedPtrs3<AccumType> weighted_coefficients) {
+  const auto N = output_dims.v0 + output_dims.v1 + output_dims.v2;
 
   CALCULATE_ELEMENTWISE_INDEX_OR_EXIT(id, N);
 
-  if (id < std::get<0>(output_dims)) {
+  if (id < output_dims.v0) {
     // Setup for d by default (id < output_depth)
-    int64_t input_size = std::get<0>(input_dims);
-    int64_t output_size = std::get<0>(output_dims);
-    float inv_scale = std::get<0>(inv_scale_vals);
-    float roi_start = std::get<0>(roi_start_vals);
-    float roi_end = std::get<0>(roi_end_vals);
-    float scaled_support = std::get<0>(dim_scaled_support);
-    int32_t window_size = std::get<0>(dim_window_size);
+    int64_t input_size = input_dims.v0;
+    int64_t output_size = output_dims.v0;
+    float inv_scale = inv_scale_vals.v0;
+    float roi_start = roi_start_vals.v0;
+    float roi_end = roi_end_vals.v0;
+    float scaled_support = dim_scaled_support.v0;
+    int32_t window_size = dim_window_size.v0;
 
     SetupUpsampleFilterAnitAliasImpl<AccumType, Filter, CudaFunctionOriginalCoordinate>(
         id,
@@ -574,20 +593,20 @@ __global__ void _SetupTrilinerarUpsampleFilterAntiAlias(
         onnxruntime::antialias_constants::kCubicCoeffA,  // Default value for trilinear
         bounds,
         out_of_bounds,
-        std::get<0>(weighted_coefficients));
+        weighted_coefficients.v0);
 
-  } else if (id >= std::get<0>(output_dims) && id < (std::get<0>(output_dims) + std::get<1>(output_dims))) {
-    int64_t input_size = std::get<1>(input_dims);
-    int64_t output_size = std::get<1>(output_dims);
-    float inv_scale = std::get<1>(inv_scale_vals);
-    float roi_start = std::get<1>(roi_start_vals);
-    float roi_end = std::get<1>(roi_end_vals);
+  } else if (id >= output_dims.v0 && id < (output_dims.v0 + output_dims.v1)) {
+    int64_t input_size = input_dims.v1;
+    int64_t output_size = output_dims.v1;
+    float inv_scale = inv_scale_vals.v1;
+    float roi_start = roi_start_vals.v1;
+    float roi_end = roi_end_vals.v1;
 
-    float scaled_support = std::get<1>(dim_scaled_support);
-    int32_t window_size = std::get<1>(dim_window_size);
+    float scaled_support = dim_scaled_support.v1;
+    int32_t window_size = dim_window_size.v1;
 
     // Adjust buffer positions
-    const auto d_output_size = std::get<0>(output_dims);
+    const auto d_output_size = output_dims.v0;
 
     auto i = id - d_output_size;
     bounds += d_output_size * 2;
@@ -603,18 +622,18 @@ __global__ void _SetupTrilinerarUpsampleFilterAntiAlias(
         onnxruntime::antialias_constants::kCubicCoeffA,  // Default value for trilinear
         bounds,
         out_of_bounds,
-        std::get<1>(weighted_coefficients));
+        weighted_coefficients.v1);
   } else {
-    int64_t input_size = std::get<2>(input_dims);
-    int64_t output_size = std::get<2>(output_dims);
-    float inv_scale = std::get<2>(inv_scale_vals);
-    float roi_start = std::get<2>(roi_start_vals);
-    float roi_end = std::get<2>(roi_end_vals);
-    float scaled_support = std::get<2>(dim_scaled_support);
-    int32_t window_size = std::get<2>(dim_window_size);
+    int64_t input_size = input_dims.v2;
+    int64_t output_size = output_dims.v2;
+    float inv_scale = inv_scale_vals.v2;
+    float roi_start = roi_start_vals.v2;
+    float roi_end = roi_end_vals.v2;
+    float scaled_support = dim_scaled_support.v2;
+    int32_t window_size = dim_window_size.v2;
 
     // Adjust buffer positions
-    const auto d_y_output_size = std::get<0>(output_dims) + std::get<1>(output_dims);
+    const auto d_y_output_size = output_dims.v0 + output_dims.v1;
 
     auto i = id - d_y_output_size;
     bounds += (d_y_output_size * 2);
@@ -630,7 +649,7 @@ __global__ void _SetupTrilinerarUpsampleFilterAntiAlias(
         onnxruntime::antialias_constants::kCubicCoeffA,  // Default value for trilinear
         bounds,
         out_of_bounds,
-        std::get<2>(weighted_coefficients));
+        weighted_coefficients.v2);
   }
 }
 
@@ -762,18 +781,18 @@ void ResizeTrilinearUpsample(
     _SetupTrilinerarUpsampleFilterAntiAlias<AccumType,
                                             TriLinearFilter,
                                             coord_t><<<blocksPerDimsMappingGrid, 32, 0, stream>>>(
-        inferred_input_dims,
-        inferred_output_dims,
-        inferred_dim_rscales,
-        std::make_tuple(roi_vals[rank - 3], roi_vals[rank - 2], roi_vals[rank - 1]),  // roi starts d, h, w
-        std::make_tuple(roi_vals[rank - 3 + rank], roi_vals[rank - 2 + rank],         // roi ends d, h, w
-                        roi_vals[rank - 1 + rank]),
-        std::make_tuple(z_scaled_support, h_scaled_support, w_scaled_support),
-        std::make_tuple(z_window_size, h_window_size, w_window_size),
+        Int64x3{input_depth, input_height, input_width},
+        Int64x3{output_depth, output_height, output_width},
+        Floatx3{z_scale, h_scale, w_scale},
+        Floatx3{roi_vals[rank - 3], roi_vals[rank - 2], roi_vals[rank - 1]},  // roi starts d, h, w
+        Floatx3{roi_vals[rank - 3 + rank], roi_vals[rank - 2 + rank],         // roi ends d, h, w
+                        roi_vals[rank - 1 + rank]},
+        Floatx3{z_scaled_support, h_scaled_support, w_scaled_support},
+        Int32x3{z_window_size, h_window_size, w_window_size},
         exclude_outside,
         GetTyped<int64_t>(bounds_buffer_ptr),
         GetTyped<int64_t>(out_of_bounds_buffer_ptr),
-        std::make_tuple(z_weighted_buffer, y_weighted_buffer, w_weighted_buffer));
+        TypedPtrs3<AccumType>{z_weighted_buffer, y_weighted_buffer, w_weighted_buffer});
   });
 
   // clang-format on
@@ -786,7 +805,7 @@ void ResizeTrilinearUpsample(
       w_window_size,
       clip8_lookups,
       w_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       w_weighted_buffer, input_data,
       GetTyped<T>(h_w_interpolate_temp_buffer_ptr),
       narrow<int>(h_w_interpolate_temp_buf_size));
@@ -804,7 +823,7 @@ void ResizeTrilinearUpsample(
       false, 0.f,  // No extrapolation
       clip8_lookups,
       y_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       y_weighted_buffer, GetTyped<T>(h_w_interpolate_temp_buffer_ptr),
       GetTyped<T>(h_w_interpolate_result_buffer_ptr),
       narrow<int>(h_w_interpolate_result_buffer_size));
@@ -822,7 +841,7 @@ void ResizeTrilinearUpsample(
       use_extrapolation, extrapolation_value,
       clip8_lookups,
       z_bounds_buffer,
-      std::make_tuple(z_outof_bounds_buffer, y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs3{z_outof_bounds_buffer, y_outof_bounds_buffer, w_outof_bounds_buffer},
       z_weighted_buffer, GetTyped<T>(h_w_interpolate_result_buffer_ptr),
       output_data,
       narrow<int>(N));
@@ -910,17 +929,17 @@ void ResizeBiLinearUpsample(cudaStream_t stream,
     _SetupBilinearUpsampleFilterAntiAlias<AccumType,
                                           BilinearFilter,
                                           coord_t><<<blocksPerDimsMappingGrid, 32, 0, stream>>>(
-        std::make_tuple(input_height, input_width),
-        std::make_tuple(output_height, output_width),
-        std::make_tuple(h_scale, w_scale),
-        std::make_tuple(roi_vals[rank - 2], roi_vals[rank - 1]),                // roi starts h, w
-        std::make_tuple(roi_vals[rank - 2 + rank], roi_vals[rank - 1 + rank]),  // roi ends h, w
-        std::make_tuple(h_scaled_support, w_scaled_support),
-        std::make_tuple(h_window_size, w_window_size),
+        Int64x2{input_height, input_width},
+        Int64x2{output_height, output_width},
+        Floatx2{h_scale, w_scale},
+        Floatx2{roi_vals[rank - 2], roi_vals[rank - 1]},                // roi starts h, w
+        Floatx2{roi_vals[rank - 2 + rank], roi_vals[rank - 1 + rank]},  // roi ends h, w
+        Floatx2{h_scaled_support, w_scaled_support},
+        Int32x2{h_window_size, w_window_size},
         onnxruntime::antialias_constants::kCubicCoeffA, exclude_outside,
         GetTyped<int64_t>(bounds_buffer_ptr),
         GetTyped<int64_t>(out_of_bounds_buffer_ptr),
-        std::make_tuple(y_weighted_buffer, w_weighted_buffer));
+        TypedPtrs2<AccumType>{y_weighted_buffer, w_weighted_buffer});
   });
 
   // clang-format on
@@ -933,7 +952,7 @@ void ResizeBiLinearUpsample(cudaStream_t stream,
       w_window_size,
       clip8_lookups,
       w_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       w_weighted_buffer, input_data, GetTyped<T>(image_temp_buffer),
       narrow<int>(temp_buf_size));
 
@@ -949,7 +968,7 @@ void ResizeBiLinearUpsample(cudaStream_t stream,
       use_extrapolation, extrapolation_value,
       clip8_lookups,
       y_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       y_weighted_buffer, GetTyped<T>(image_temp_buffer), output_data,
       narrow<int>(N));
 
@@ -1035,17 +1054,17 @@ void ResizeBicubicUpsample(cudaStream_t stream,
     _SetupBilinearUpsampleFilterAntiAlias<AccumType,
                                           BiCubicFilter,
                                           coord_t><<<blocksPerDimsMappingGrid, 32, 0, stream>>>(
-        std::make_tuple(input_height, input_width),
-        std::make_tuple(output_height, output_width),
-        std::make_tuple(h_scale, w_scale),
-        std::make_tuple(roi_vals[rank - 2], roi_vals[rank - 1]),                // roi starts h, w
-        std::make_tuple(roi_vals[rank - 2 + rank], roi_vals[rank - 1 + rank]),  // roi ends h, w
-        std::make_tuple(h_scaled_support, w_scaled_support),
-        std::make_tuple(h_window_size, w_window_size),
+        Int64x2{input_height, input_width},
+        Int64x2{output_height, output_width},
+        Floatx2{h_scale, w_scale},
+        Floatx2{roi_vals[rank - 2], roi_vals[rank - 1]},                // roi starts h, w
+        Floatx2{roi_vals[rank - 2 + rank], roi_vals[rank - 1 + rank]},  // roi ends h, w
+        Floatx2{h_scaled_support, w_scaled_support},
+        Int32x2{h_window_size, w_window_size},
         onnxruntime::antialias_constants::kCubicCoeffA, exclude_outside,
         GetTyped<int64_t>(bounds_buffer_ptr),
         GetTyped<int64_t>(out_of_bounds_buffer_ptr),
-        std::make_tuple(y_weighted_buffer, w_weighted_buffer));
+        TypedPtrs2<AccumType>{y_weighted_buffer, w_weighted_buffer});
   });
   // clang-format on
   const fast_divmod div_step_image(narrow<int>(num_channels * input_height * output_width));
@@ -1057,7 +1076,7 @@ void ResizeBicubicUpsample(cudaStream_t stream,
       w_window_size,
       clip8_lookups,
       w_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       w_weighted_buffer, input_data, GetTyped<T>(image_temp_buffer),
       narrow<int>(temp_buf_size));
   // clang-format on
@@ -1073,7 +1092,7 @@ void ResizeBicubicUpsample(cudaStream_t stream,
       use_extrapolation, extrapolation_value,
       clip8_lookups,
       y_bounds_buffer,
-      std::make_tuple(y_outof_bounds_buffer, w_outof_bounds_buffer),
+      Int64Ptrs2{y_outof_bounds_buffer, w_outof_bounds_buffer},
       y_weighted_buffer, GetTyped<T>(image_temp_buffer), output_data,
       narrow<int>(N));
   // clang-format on
