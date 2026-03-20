@@ -2946,7 +2946,11 @@ Status TensorrtExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphView
   std::string cache_hw_compat = "_sm" + compute_capability_;
   // Enable hardware compatility mode if assigned
   if (engine_cache_enable_ && engine_hw_compatible_) {
+#if NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR > 5 || NV_TENSORRT_MAJOR > 8
     trt_config->setHardwareCompatibilityLevel(nvinfer1::HardwareCompatibilityLevel::kAMPERE_PLUS);
+#else
+    LOGS_DEFAULT(WARNING) << "[TensorRT EP] Hardware compatibility requires TensorRT >= 8.6; ignoring on this version.";
+#endif
     cache_hw_compat = "_sm80+";
     LOGS_DEFAULT(VERBOSE) << "[TensorRT EP] Hardware compatibility is enabled when loading and capturing engine cache.";
   }
@@ -3505,7 +3509,11 @@ Status TensorrtExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphView
 
       // Enable hardware compatility mode if assigned
       if (trt_state->engine_hw_compatible) {
+#if NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR > 5 || NV_TENSORRT_MAJOR > 8
         trt_config->setHardwareCompatibilityLevel(nvinfer1::HardwareCompatibilityLevel::kAMPERE_PLUS);
+#else
+        LOGS_DEFAULT(WARNING) << "[TensorRT EP] Hardware compatibility requires TensorRT >= 8.6; ignoring on this version.";
+#endif
         LOGS_DEFAULT(INFO) << "[TensorRT EP] Re-generate engine with hardware compatibility enabled.";
       }
 
