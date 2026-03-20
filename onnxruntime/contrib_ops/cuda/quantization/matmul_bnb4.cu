@@ -75,7 +75,8 @@ __global__ void kgemm_4bit_inference_naive(
   uint8_t local_B_4bit[num_values_8bit];
   T local_B[num_values_4bit / 4];
   T local_A[num_values_4bit / 4];
-  __shared__ T quant_map[16];
+  __shared__ char _quant_map_raw[(16) * sizeof(T)];
+  T* quant_map = reinterpret_cast<T*>(_quant_map_raw);
   T local_absmax = T(0.0f);
 
   for (int i = threadIdx.x; i < 16; i++) quant_map[i] = T(datatype[i]);
