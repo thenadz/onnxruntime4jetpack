@@ -554,6 +554,7 @@ struct _IsInf {
     } else {
       return false;
     }
+    return false;
   }
 };
 
