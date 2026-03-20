@@ -1,4 +1,18 @@
-<p align="center"><img width="50%" src="docs/images/ONNX_Runtime_logo_dark.png" /></p>
+<p align="center">
+  <img width="40%" src="docs/images/ONNX_Runtime_logo_dark.png" alt="ONNX Runtime" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img width="28%" src="docs/images/jetson_agx_xavier.jpg" alt="NVIDIA Jetson AGX Xavier" />
+</p>
+
+## Why This Fork?
+
+NVIDIA's original Jetson lineup — Xavier, TX2, and Nano — remains widely deployed in production robotics, edge inference, and industrial automation. These modules are locked to **JetPack 5.x**, which ships **CUDA 11.4** and **nvcc 11.4**. NVIDIA does not provide newer CUDA toolkits for this hardware, and JetPack 6+ targets only the Orin generation.
+
+Meanwhile, upstream ONNX Runtime has moved on. Newer releases assume CUDA 12+ features, use C++ constructs that trip nvcc 11.4 bugs, and reference FP8 data types that don't exist in CUDA 11.4 headers. The result: **ORT ≥ 1.17 will not build on JetPack 5.x without targeted patches**.
+
+This fork bridges that gap. It carries a minimal, well-documented set of source-level fixes — applied on top of the official ORT v1.18 release — that restore compatibility with nvcc 11.4 and the JetPack 5.x SDK. Nothing is removed; the patches work around compiler limitations and missing constants so that the full CUDA and TensorRT execution providers build and run correctly on Xavier-class hardware.
+
+**If you are running inference on a Jetson Xavier, TX2, or Nano module and need a current version of ONNX Runtime with GPU acceleration, this is the repo for you.**
 
 **ONNX Runtime is a cross-platform inference and training machine-learning accelerator**.
 
